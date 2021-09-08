@@ -18,6 +18,7 @@ import train_and_test as tnt
 import save
 from log import create_logger
 from preprocess import mean, std, preprocess_input_function
+import glob 
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-gpuid', nargs=1, type=str, default='0') # python3 main.py -gpuid=0,1,2,3
@@ -137,6 +138,8 @@ from settings import num_train_epochs, num_warm_epochs, push_start, push_epochs
 # train the model
 log('start training')
 import copy
+
+bestAcc = 0
 for epoch in range(num_train_epochs):
     log('epoch: \t{0}'.format(epoch))
 
@@ -151,9 +154,12 @@ for epoch in range(num_train_epochs):
                       class_specific=class_specific, coefs=coefs, log=log)
 
     accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
-                    class_specific=class_specific, log=log)
-    save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'nopush', accu=accu,
-                                target_accu=0.70, log=log)
+                    class_specific=class_specific, log=log,epoch=epoch)
+    #save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'nopush', accu=accu,
+    #                            target_accu=0.70, log=log)
+    save.save_model_if_best(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'nopush', accu=accu,
+                                best_accu=bestAcc, log=log)
+    bestAcc = accu if accu > bestAcc else bestAcc
 
     if epoch >= push_start and epoch in push_epochs:
         push.push_prototypes(
@@ -170,9 +176,12 @@ for epoch in range(num_train_epochs):
             save_prototype_class_identity=True,
             log=log)
         accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
-                        class_specific=class_specific, log=log)
-        save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
-                                    target_accu=0.70, log=log)
+                        class_specific=class_specific, log=log,epoch=epoch)
+        #save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
+        #                            target_accu=0.70, log=log)
+        save.save_model_if_best(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
+                                best_accu=bestAcc, log=log)
+        bestAcc = accu if accu > bestAcc else bestAcc
 
         if prototype_activation_function != 'linear':
             tnt.last_only(model=ppnet_multi, log=log)
@@ -181,9 +190,17 @@ for epoch in range(num_train_epochs):
                 _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=last_layer_optimizer,
                               class_specific=class_specific, coefs=coefs, log=log)
                 accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
-                                class_specific=class_specific, log=log)
-                save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + '_' + str(i) + 'push', accu=accu,
-                                            target_accu=0.70, log=log)
-   
+                                class_specific=class_specific, log=log,epoch=epoch)
+                #save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + '_' + str(i) + 'push', accu=accu,
+                #                            target_accu=0.70, log=log)
+                save.save_model_if_best(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
+                                            best_accu=bestAcc, log=log)
+                bestAcc = accu if accu > bestAcc else bestAcc
+
+print("---------FINAL TEST--------")
+bestPath = glob.glob(os.path.join(model_dir, '*pushbest.pth'))[0]
+state_dic = torch.load(bestPath)
+accu = tnt.test(model=ppnet_multi, dataloader=test_loader,class_specific=class_specific, log=log,epoch=epoch,finalEval=True)
+
 logclose()
 
