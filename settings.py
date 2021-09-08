@@ -1,4 +1,4 @@
-base_architecture = 'vgg19'
+base_architecture = 'resnet50'
 img_size = 224
 prototype_shape = (2000, 128, 1, 1)
 num_classes = 200
@@ -32,7 +32,7 @@ coefs = {
     'l1': 1e-4,
 }
 
-num_train_epochs = 1000
+num_train_epochs = 50
 num_warm_epochs = 5
 
 push_start = 10
