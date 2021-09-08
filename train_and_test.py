@@ -1,10 +1,11 @@
 import time
 import torch
+import numpy as np 
 
 from helpers import list_of_distances, make_one_hot
 
 def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l1_mask=True,
-                   coefs=None, log=print):
+                   coefs=None, log=print,epoch=-1,finalEval=False):
     '''
     model: the multi-gpu model
     dataloader:
@@ -21,6 +22,9 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
     total_separation_cost = 0
     total_avg_separation_cost = 0
 
+    if not is_train:
+        allNorm,allAtt = None,None
+
     for i, (image, label) in enumerate(dataloader):
         input = image.cuda()
         target = label.cuda()
@@ -30,7 +34,13 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
         with grad_req:
             # nn.Module has implemented __call__() function
             # so no need to call .forward
-            output, min_distances = model(input)
+
+            ret = model(input,retFeat=not is_train)
+            
+            if is_train:
+                output, min_distances = ret
+            else:
+                output,min_distances,features,similarities,distances = ret
 
             # compute loss
             cross_entropy = torch.nn.functional.cross_entropy(output, target)
@@ -79,6 +89,19 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
             total_separation_cost += separation_cost.item()
             total_avg_separation_cost += avg_separation_cost.item()
 
+            if not is_train and finalEval:
+                attMaps = []
+                mapsToKeep = torch.topk(-similarities,k=3,dim=1)[1]
+                for j in range(len(similarities)):
+                    sim_2d = torch.exp(-distances)
+                    attMaps.append(sim_2d[j][mapsToKeep[j]].unsqueeze(0))
+                attMaps = torch.cat(attMaps,dim=0)
+
+                norm = torch.sqrt(torch.pow(features,2).sum(dim=1,keepdim=True))
+
+                allNorm = catMap(allNorm,norm)
+                allAtt = catMap(allAtt,attMaps)
+
         # compute gradient and do SGD step
         if is_train:
             if class_specific:
@@ -108,21 +131,38 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
 
     end = time.time()
 
-    log('\ttime: \t{0}'.format(end -  start))
-    log('\tcross ent: \t{0}'.format(total_cross_entropy / n_batches))
-    log('\tcluster: \t{0}'.format(total_cluster_cost / n_batches))
-    if class_specific:
-        log('\tseparation:\t{0}'.format(total_separation_cost / n_batches))
-        log('\tavg separation:\t{0}'.format(total_avg_separation_cost / n_batches))
+    #log('\ttime: \t{0}'.format(end -  start))
+    #log('\tcross ent: \t{0}'.format(total_cross_entropy / n_batches))
+    #log('\tcluster: \t{0}'.format(total_cluster_cost / n_batches))
+    #if class_specific:
+    #    log('\tseparation:\t{0}'.format(total_separation_cost / n_batches))
+    #    log('\tavg separation:\t{0}'.format(total_avg_separation_cost / n_batches))
     log('\taccu: \t\t{0}%'.format(n_correct / n_examples * 100))
-    log('\tl1: \t\t{0}'.format(model.module.last_layer.weight.norm(p=1).item()))
+    #log('\tl1: \t\t{0}'.format(model.module.last_layer.weight.norm(p=1).item()))
     p = model.module.prototype_vectors.view(model.module.num_prototypes, -1).cpu()
-    with torch.no_grad():
-        p_avg_pair_dist = torch.mean(list_of_distances(p, p))
-    log('\tp dist pair: \t{0}'.format(p_avg_pair_dist.item()))
+    #with torch.no_grad():
+    #    p_avg_pair_dist = torch.mean(list_of_distances(p, p))
+    #log('\tp dist pair: \t{0}'.format(p_avg_pair_dist.item()))
+
+    if not is_train and finalEval:
+        np.save("./results/norm_modelprototree_epoch{}_test.npy".format(epoch),allNorm.numpy())
+        np.save("./results/attMaps_modelprototree_epoch{}_test.npy".format(epoch),allAtt.numpy())
 
     return n_correct / n_examples
 
+def catMap(fullMap,map):
+
+    #In case attention weights are not comprised between 0 and 1
+    tens_min = map.min(dim=-1,keepdim=True)[0].min(dim=-2,keepdim=True)[0].min(dim=-3,keepdim=True)[0]
+    tens_max = map.max(dim=-1,keepdim=True)[0].max(dim=-2,keepdim=True)[0].max(dim=-3,keepdim=True)[0]
+    map = (map-tens_min)/(tens_max-tens_min)
+
+    if fullMap is None:
+        fullMap = (map.cpu()*255).byte()
+    else:
+        fullMap = torch.cat((fullMap,(map.cpu()*255).byte()),dim=0)
+
+    return fullMap
 
 def train(model, dataloader, optimizer, class_specific=False, coefs=None, log=print):
     assert(optimizer is not None)
@@ -133,11 +173,11 @@ def train(model, dataloader, optimizer, class_specific=False, coefs=None, log=pr
                           class_specific=class_specific, coefs=coefs, log=log)
 
 
-def test(model, dataloader, class_specific=False, log=print):
+def test(model, dataloader, class_specific=False, log=print,epoch=-1,finalEval=False):
     log('\ttest')
     model.eval()
     return _train_or_test(model=model, dataloader=dataloader, optimizer=None,
-                          class_specific=class_specific, log=log)
+                          class_specific=class_specific, log=log,epoch=epoch,finalEval=finalEval)
 
 
 def last_only(model, log=print):

@@ -170,13 +170,16 @@ class PPNet(nn.Module):
 
         return distances
 
-    def prototype_distances(self, x):
+    def prototype_distances(self, x,retFeat=False):
         '''
         x is the raw input
         '''
         conv_features = self.conv_features(x)
         distances = self._l2_convolution(conv_features)
-        return distances
+        if retFeat:
+            return distances,conv_features
+        else:
+            return distances
 
     def distance_2_similarity(self, distances):
         if self.prototype_activation_function == 'log':
@@ -186,8 +189,13 @@ class PPNet(nn.Module):
         else:
             return self.prototype_activation_function(distances)
 
-    def forward(self, x):
-        distances = self.prototype_distances(x)
+    def forward(self, x,retFeat=False):
+        ret = self.prototype_distances(x,retFeat)
+        if retFeat:
+            distances,features = ret
+        else:
+            distances = ret 
+            
         '''
         we cannot refactor the lines below for similarity scores
         because we need to return min_distances
@@ -199,7 +207,11 @@ class PPNet(nn.Module):
         min_distances = min_distances.view(-1, self.num_prototypes)
         prototype_activations = self.distance_2_similarity(min_distances)
         logits = self.last_layer(prototype_activations)
-        return logits, min_distances
+
+        if retFeat:
+            return logits,min_distances,features,prototype_activations,distances
+        else:
+            return logits, min_distances
 
     def push_forward(self, x):
         '''this method is needed for the pushing operation'''
