@@ -32,7 +32,7 @@ coefs = {
     'l1': 1e-4,
 }
 
-num_train_epochs = 50
+num_train_epochs = 10
 num_warm_epochs = 5
 
 push_start = 10
