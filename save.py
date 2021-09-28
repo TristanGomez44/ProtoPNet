@@ -15,5 +15,9 @@ def save_model_if_best(model, model_dir, model_name, accu, best_accu, log=print)
     model: this is not the multigpu model
     '''
     if accu > best_accu:
-        log('\tbest {0:.2f}%'.format(best_accu * 100))
-        torch.save(obj=model, f=os.path.join(model_dir, (model_name + 'best.pth')))
+        log('\tbest {0:.2f}%'.format(accu * 100))
+        torch.save(obj=model, f=os.path.join(model_dir, (model_name + 'best{}.pth'.format(accu))))
+
+        oldPath = os.path.join(model_dir, (model_name + 'best{}.pth'.format(best_accu)))
+        if os.path.exists(oldPath):
+            os.remove(oldPath)
