@@ -22,6 +22,9 @@ import glob
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-gpuid', nargs=1, type=str, default='0') # python3 main.py -gpuid=0,1,2,3
+parser.add_argument('-test', type=str)
+parser.add_argument('-start_from_best',action="store_true") 
+
 args = parser.parse_args()
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
 print(os.environ['CUDA_VISIBLE_DEVICES'])
@@ -41,8 +44,9 @@ shutil.copy(src=os.path.join(os.getcwd(), 'model.py'), dst=model_dir)
 shutil.copy(src=os.path.join(os.getcwd(), 'train_and_test.py'), dst=model_dir)
 
 log, logclose = create_logger(log_filename=os.path.join(model_dir, 'train.log'))
-img_dir = os.path.join(model_dir, 'img')
-makedir(img_dir)
+#img_dir = os.path.join(model_dir, 'img')
+img_dir = None
+#makedir(img_dir)
 weight_matrix_filename = 'outputL_weights'
 prototype_img_filename_prefix = 'prototype-img'
 prototype_self_act_filename_prefix = 'prototype-self-act'
@@ -139,66 +143,94 @@ from settings import num_train_epochs, num_warm_epochs, push_start, push_epochs
 log('start training')
 import copy
 
-bestAcc = 0
-for epoch in range(num_train_epochs):
-    log('epoch: \t{0}'.format(epoch))
+if not args.test:
 
-    if epoch < num_warm_epochs:
-        tnt.warm_only(model=ppnet_multi, log=log)
-        _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=warm_optimizer,
-                      class_specific=class_specific, coefs=coefs, log=log)
+    if args.start_from_best:
+        
+        bestPath = sorted(glob.glob(os.path.join(model_dir, '*pushbest*.pth')),key=lambda x:float(x.replace(".pth","").split("pushbest")[1]))[-1]
+        print("BEST PATH",bestPath)
+        #ppnet_multi.load_state_dict(torch.load(bestPath))
+        ppnet = torch.load(bestPath)
+        ppnet = ppnet.cuda()
+        ppnet_multi = torch.nn.DataParallel(ppnet)
+
+        if bestPath.find("nopush") != -1:
+            startEpoch = int(os.path.basename(bestPath).split("nopush")[0])
+        else:
+            startEpoch = int(os.path.basename(bestPath).split("push")[0])
+
     else:
-        tnt.joint(model=ppnet_multi, log=log)
-        joint_lr_scheduler.step()
-        _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=joint_optimizer,
-                      class_specific=class_specific, coefs=coefs, log=log)
+        startEpoch = 0
 
-    accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
-                    class_specific=class_specific, log=log,epoch=epoch)
-    #save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'nopush', accu=accu,
-    #                            target_accu=0.70, log=log)
-    save.save_model_if_best(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'nopush', accu=accu,
-                                best_accu=bestAcc, log=log)
-    bestAcc = accu if accu > bestAcc else bestAcc
+    bestAcc = 0
+    for epoch in range(startEpoch,num_train_epochs):
+        log('epoch: \t{0}'.format(epoch))
 
-    if epoch >= push_start and epoch in push_epochs:
-        push.push_prototypes(
-            train_push_loader, # pytorch dataloader (must be unnormalized in [0,1])
-            prototype_network_parallel=ppnet_multi, # pytorch network with prototype_vectors
-            class_specific=class_specific,
-            preprocess_input_function=preprocess_input_function, # normalize if needed
-            prototype_layer_stride=1,
-            root_dir_for_saving_prototypes=img_dir, # if not None, prototypes will be saved here
-            epoch_number=epoch, # if not provided, prototypes saved previously will be overwritten
-            prototype_img_filename_prefix=prototype_img_filename_prefix,
-            prototype_self_act_filename_prefix=prototype_self_act_filename_prefix,
-            proto_bound_boxes_filename_prefix=proto_bound_boxes_filename_prefix,
-            save_prototype_class_identity=True,
-            log=log)
+        if epoch < num_warm_epochs:
+            tnt.warm_only(model=ppnet_multi, log=log)
+            _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=warm_optimizer,
+                        class_specific=class_specific, coefs=coefs, log=log)
+        else:
+            tnt.joint(model=ppnet_multi, log=log)
+            joint_lr_scheduler.step()
+            _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=joint_optimizer,
+                        class_specific=class_specific, coefs=coefs, log=log)
+
         accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
                         class_specific=class_specific, log=log,epoch=epoch)
-        #save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
+        #save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'nopush', accu=accu,
         #                            target_accu=0.70, log=log)
-        save.save_model_if_best(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
-                                best_accu=bestAcc, log=log)
+        save.save_model_if_best(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'nopush', accu=accu,
+                                    best_accu=bestAcc, log=log)
         bestAcc = accu if accu > bestAcc else bestAcc
 
-        if prototype_activation_function != 'linear':
-            tnt.last_only(model=ppnet_multi, log=log)
-            for i in range(20):
-                log('iteration: \t{0}'.format(i))
-                _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=last_layer_optimizer,
-                              class_specific=class_specific, coefs=coefs, log=log)
-                accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
-                                class_specific=class_specific, log=log,epoch=epoch)
-                #save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + '_' + str(i) + 'push', accu=accu,
-                #                            target_accu=0.70, log=log)
-                save.save_model_if_best(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
-                                            best_accu=bestAcc, log=log)
-                bestAcc = accu if accu > bestAcc else bestAcc
+        if epoch >= push_start and epoch in push_epochs:
+            push.push_prototypes(
+                train_push_loader, # pytorch dataloader (must be unnormalized in [0,1])
+                prototype_network_parallel=ppnet_multi, # pytorch network with prototype_vectors
+                class_specific=class_specific,
+                preprocess_input_function=preprocess_input_function, # normalize if needed
+                prototype_layer_stride=1,
+                root_dir_for_saving_prototypes=img_dir, # if not None, prototypes will be saved here
+                epoch_number=epoch, # if not provided, prototypes saved previously will be overwritten
+                prototype_img_filename_prefix=prototype_img_filename_prefix,
+                prototype_self_act_filename_prefix=prototype_self_act_filename_prefix,
+                proto_bound_boxes_filename_prefix=proto_bound_boxes_filename_prefix,
+                save_prototype_class_identity=True,
+                log=log)
+            accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
+                            class_specific=class_specific, log=log,epoch=epoch)
+            #save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
+            #                            target_accu=0.70, log=log)
+            save.save_model_if_best(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
+                                    best_accu=bestAcc, log=log)
+            bestAcc = accu if accu > bestAcc else bestAcc
+
+            if prototype_activation_function != 'linear':
+                tnt.last_only(model=ppnet_multi, log=log)
+                for i in range(20):
+                    log('iteration: \t{0}'.format(i))
+                    _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=last_layer_optimizer,
+                                class_specific=class_specific, coefs=coefs, log=log)
+                    accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
+                                    class_specific=class_specific, log=log,epoch=epoch)
+                    #save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + '_' + str(i) + 'push', accu=accu,
+                    #                            target_accu=0.70, log=log)
+                    save.save_model_if_best(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
+                                                best_accu=bestAcc, log=log)
+                    bestAcc = accu if accu > bestAcc else bestAcc
+
+    
+    print("BEST PATH",os.path.join(model_dir, '*pushbest{}.pth'.format(bestAcc)))
+    bestPath = glob.glob(os.path.join(model_dir, '*pushbest{}.pth'.format(bestAcc)))[0]
+
+else:
+
+    bestPath = args.test
+    epoch = int(os.path.basename(bestPath).split("nopushbest")[0])
+
 
 print("---------FINAL TEST--------")
-bestPath = glob.glob(os.path.join(model_dir, '*pushbest.pth'))[0]
 state_dic = torch.load(bestPath)
 accu = tnt.test(model=ppnet_multi, dataloader=test_loader,class_specific=class_specific, log=log,epoch=epoch,finalEval=True)
 

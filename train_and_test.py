@@ -91,9 +91,9 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
 
             if not is_train and finalEval:
                 attMaps = []
-                mapsToKeep = torch.topk(-similarities,k=3,dim=1)[1]
+                mapsToKeep = torch.topk(similarities,k=3,dim=1)[1]
+                sim_2d = model.module.distance_2_similarity(distances)
                 for j in range(len(similarities)):
-                    sim_2d = torch.exp(-distances)
                     attMaps.append(sim_2d[j][mapsToKeep[j]].unsqueeze(0))
                 attMaps = torch.cat(attMaps,dim=0)
 
@@ -145,8 +145,8 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
     #log('\tp dist pair: \t{0}'.format(p_avg_pair_dist.item()))
 
     if not is_train and finalEval:
-        np.save("./results/norm_modelprototree_epoch{}_test.npy".format(epoch),allNorm.numpy())
-        np.save("./results/attMaps_modelprototree_epoch{}_test.npy".format(epoch),allAtt.numpy())
+        np.save("./results/norm_protopnet_epoch{}_test.npy".format(epoch),allNorm.numpy())
+        np.save("./results/attMaps_protopnet_epoch{}_test.npy".format(epoch),allAtt.numpy())
 
     return n_correct / n_examples
 
