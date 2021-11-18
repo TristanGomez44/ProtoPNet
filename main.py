@@ -25,6 +25,11 @@ parser.add_argument('-gpuid', nargs=1, type=str, default='0') # python3 main.py 
 parser.add_argument('-test', type=str)
 parser.add_argument('-start_from_best',action="store_true") 
 
+parser.add_argument('-dataset_path',type=str)
+parser.add_argument('-base_arch',type=str)
+parser.add_argument('-batch_size',type=int)
+parser.add_argument('-test_batch_size',type=int)
+
 args = parser.parse_args()
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
 print(os.environ['CUDA_VISIBLE_DEVICES'])
@@ -33,6 +38,9 @@ print(os.environ['CUDA_VISIBLE_DEVICES'])
 from settings import base_architecture, img_size, prototype_shape, num_classes, \
                      prototype_activation_function, add_on_layers_type, experiment_run
 
+if args.base_arch:
+    base_architecture = args.base_arch
+    
 base_architecture_type = re.match('^[a-z]*', base_architecture).group(0)
 
 model_dir = './saved_models/' + base_architecture + '/' + experiment_run + '/'
@@ -55,6 +63,22 @@ proto_bound_boxes_filename_prefix = 'bb'
 # load the data
 from settings import train_dir, test_dir, train_push_dir, \
                      train_batch_size, test_batch_size, train_push_batch_size
+
+if args.batch_size:
+    train_batch_size = args.batch_size 
+
+if args.test_batch_size:
+    test_batch_size = args.test_batch_size
+
+if args.dataset_path:
+
+    from settings import data_path
+
+    train_dir = train_dir.replace(data_path,args.dataset_path)
+    test_dir = test_dir.replace(data_path,args.dataset_path)
+    train_push_dir = train_push_dir.replace(data_path,args.dataset_path)
+
+    print(train_dir,test_dir,train_push_dir)
 
 normalize = transforms.Normalize(mean=mean,
                                  std=std)
